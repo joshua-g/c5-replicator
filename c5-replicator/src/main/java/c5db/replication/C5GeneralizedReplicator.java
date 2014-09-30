@@ -44,7 +44,8 @@ import java.util.concurrent.ExecutionException;
  * interface.
  */
 public class C5GeneralizedReplicator implements GeneralizedReplicator {
-  private final long nodeId;
+  private final long serverNodeId;
+  private final String quorumId;
   private final Replicator replicator;
   private final Fiber fiber;
 
@@ -58,11 +59,16 @@ public class C5GeneralizedReplicator implements GeneralizedReplicator {
       new ArrayDeque<>(ReplicatorConstants.REPLICATOR_MAXIMUM_SIMULTANEOUS_LOG_REQUESTS);
 
   /**
-   * Both the fiber and replicator must be started by the user of this class, and the
-   * user takes responsibility for their disposal.
+   * Both the Fiber and Replicator must be started by the user of this class, and the
+   * user takes responsibility for their disposal. Because the constructor handles
+   * subscription to the Replicator's channels, the Replicator must not yet be active
+   * (started) or else it's possible for this class to miss some emitted notices. So,
+   * the user of this class should start the Replicator after creating the
+   * C5GeneralizedReplicator.
    */
   public C5GeneralizedReplicator(Replicator replicator, Fiber fiber) {
-    this.nodeId = replicator.getId();
+    this.serverNodeId = replicator.getId();
+    this.quorumId = replicator.getQuorumId();
     this.replicator = replicator;
     this.fiber = fiber;
 
@@ -111,9 +117,6 @@ public class C5GeneralizedReplicator implements GeneralizedReplicator {
   }
 
   private void setupCommitNoticeSubscription() {
-    final String quorumId = replicator.getQuorumId();
-    final long serverNodeId = replicator.getId();
-
     replicator.getCommitNoticeChannel().subscribe(
         new ChannelSubscription<>(this.fiber, this::handleCommitNotice,
             (notice) ->
@@ -173,7 +176,7 @@ public class C5GeneralizedReplicator implements GeneralizedReplicator {
     if (availableFuture != null
         && eventNotice.instance == replicator
         && eventNotice.eventType == ReplicatorInstanceEvent.EventType.LEADER_ELECTED
-        && eventNotice.newLeader == nodeId) {
+        && eventNotice.newLeader == serverNodeId) {
 
       // Notify past callers of isAvailableFuture
       availableFuture.set(null);

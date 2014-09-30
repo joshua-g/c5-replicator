@@ -68,8 +68,10 @@ public interface ReplicationModule extends C5Module {
    *                 create a Replicator for
    * @param peers    Collection of peers to be included in a new quorum; ignored for
    *                 existing ones
-   * @return A future which will return the desired Replicator, ready to use. Exceptions
-   * encountered in the creation of the Replicator will be set to the future.
+   * @return A future which will return the desired Replicator. Exceptions
+   * encountered in the creation of the Replicator will be set to the future. The
+   * Replicator will not yet be started, so the recipient must call start() before
+   * using it.
    */
   ListenableFuture<Replicator> createReplicator(String quorumId,
                                                 Collection<Long> peers);
