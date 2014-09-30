@@ -270,6 +270,7 @@ public class ReplicatorInstance implements Replicator {
     return incomingChannel;
   }
 
+  @Override
   public void start() {
     logger.debug("started {} with election timeout {}", this.quorumId, this.myElectionTimeout);
     fiber.start();

@@ -69,7 +69,10 @@ public class C5GeneralizedReplicationService implements GeneralizedReplicationSe
     return Futures.transform(
         replicationModule.createReplicator(quorumId, peerIds),
         (Replicator replicator) -> {
-          return new C5GeneralizedReplicator(replicator, createAndStartFiber(this::notifyFailed));
+          GeneralizedReplicator generalizedReplicator =
+              new C5GeneralizedReplicator(replicator, createAndStartFiber(this::notifyFailed));
+          replicator.start();
+          return generalizedReplicator;
         });
   }
 

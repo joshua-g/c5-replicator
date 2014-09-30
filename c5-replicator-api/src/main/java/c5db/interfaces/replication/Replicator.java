@@ -35,6 +35,14 @@ public interface Replicator {
   String getQuorumId();
 
   /**
+   * @return The numerical ID for the server, or node, on which this Replicator resides. More
+   * than one Replicator may have the same node ID, but any two Replicators operating at the same
+   * time with the same ID will have different quorum IDs. And, considering all the Replicators
+   * operating at some time within a single quorum, all must have different node IDs.
+   */
+  long getId();
+
+  /**
    * Return a future containing the Replicator's current quorum configuration; that is,
    * the set of peers it recognizes as being part of its quorum. This set can change
    * if directed to locally (for instance using the method changeQuorum) or if a remote
@@ -71,12 +79,13 @@ public interface Replicator {
   ListenableFuture<ReplicatorReceipt> logData(List<ByteBuffer> data) throws InterruptedException;
 
   /**
-   * @return The numerical ID for the server, or node, on which this Replicator resides. More
-   * than one Replicator may have the same node ID, but any two Replicators operating at the same
-   * time with the same ID will have different quorum IDs. And, considering all the Replicators
-   * operating at some time within a single quorum, all must have different node IDs.
+   * Start the Replicator. Before this method is called, none of the Subscribers returned by
+   * this interface's methods will emit any data. So, subscription should be done before calling
+   * start. Afterwards, it may not be deterministic whether or not a notice will be received.
+   * // TODO in the future it may make sense to break start out of this interface, along with
+   * // TODO the Subscriber methods, since they make no sense to call on a running Replicator.
    */
-  long getId();
+  void start();
 
   /**
    * Each time the Replicator changes State, it emits that State from this Subscriber.

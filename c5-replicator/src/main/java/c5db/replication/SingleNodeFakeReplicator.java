@@ -90,6 +90,7 @@ public class SingleNodeFakeReplicator implements Replicator {
     return nodeId;
   }
 
+  @Override
   public void start() {
     state = State.LEADER;
     doLater(() ->
