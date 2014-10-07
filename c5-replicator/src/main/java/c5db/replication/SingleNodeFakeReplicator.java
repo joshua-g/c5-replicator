@@ -19,6 +19,7 @@ package c5db.replication;
 import c5db.interfaces.replication.IndexCommitNotice;
 import c5db.interfaces.replication.QuorumConfiguration;
 import c5db.interfaces.replication.Replicator;
+import c5db.interfaces.replication.ReplicatorEntry;
 import c5db.interfaces.replication.ReplicatorInstanceEvent;
 import c5db.interfaces.replication.ReplicatorReceipt;
 import com.google.common.collect.Sets;
@@ -110,6 +111,11 @@ public class SingleNodeFakeReplicator implements Replicator {
   @Override
   public Subscriber<IndexCommitNotice> getCommitNoticeChannel() {
     return commitNoticeChannel;
+  }
+
+  @Override
+  public Subscriber<ReplicatorEntry> getCommittedEntryChannel() {
+    return null;
   }
 
   private void doLater(Runnable runnable) {
