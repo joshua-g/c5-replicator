@@ -115,7 +115,7 @@ public class SingleNodeFakeReplicator implements Replicator {
 
   @Override
   public Subscriber<ReplicatorEntry> getCommittedEntryChannel() {
-    return null;
+    throw new UnsupportedOperationException();
   }
 
   private void doLater(Runnable runnable) {
