@@ -24,7 +24,6 @@ import c5db.interfaces.DiscoveryModule;
 import c5db.interfaces.LogModule;
 import c5db.interfaces.ModuleInformationProvider;
 import c5db.interfaces.ReplicationModule;
-import c5db.interfaces.discovery.NodeInfoReply;
 import c5db.interfaces.discovery.NodeInfoRequest;
 import c5db.interfaces.replication.IndexCommitNotice;
 import c5db.interfaces.replication.Replicator;
@@ -69,7 +68,6 @@ import org.jetlang.channels.MemoryRequestChannel;
 import org.jetlang.channels.Request;
 import org.jetlang.channels.RequestChannel;
 import org.jetlang.channels.Session;
-import org.jetlang.core.Callback;
 import org.jetlang.fibers.Fiber;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -287,6 +285,7 @@ public class ReplicatorService extends AbstractService implements ReplicationMod
     outstandingRPCs.remove(messageId);
   }
 
+  @SuppressWarnings("RedundantCast")
   @FiberOnly
   private void handleOutgoingMessage(final Request<RpcRequest, RpcWireReply> message) {
     final RpcRequest request = message.getRequest();
@@ -310,51 +309,45 @@ public class ReplicatorService extends AbstractService implements ReplicationMod
 
     NodeInfoRequest nodeInfoRequest = new NodeInfoRequest(to, ModuleType.Replication);
     LOG.debug("node {} sending node info request {} ", nodeId, nodeInfoRequest);
-    AsyncRequest.withOneReply(fiber, discoveryModule.getNodeInfo(), nodeInfoRequest, new Callback<NodeInfoReply>() {
-      @SuppressWarnings("RedundantCast")
-      @FiberOnly
-      @Override
-      public void onMessage(NodeInfoReply nodeInfoReply) {
-        if (!nodeInfoReply.found) {
-          LOG.debug("Can't find the info for the peer {}", to);
-          // TODO signal TCP/transport layer failure in a better way
-          //message.reply(null);
-          return;
-        }
+    AsyncRequest.withOneReply(fiber, discoveryModule.getNodeInfo(), nodeInfoRequest,
+        nodeInfoReply -> {
+          if (!nodeInfoReply.found) {
+            LOG.debug("Can't find the info for the peer {}", to);
+            // TODO signal TCP/transport layer failure in a better way
+            //message.reply(null);
+            return;
+          }
 
-        LOG.debug("node {} got node info for node {} reply {} ", nodeId, to, nodeInfoReply);
-        // what if existing outgoing connection attempt?
-        Channel channel = connections.get(to);
-        if (channel != null && channel.isOpen()) {
-          sendMessageAsync(message, channel);
-          return;
-        } else if (channel != null) {
-          LOG.debug("Removing stale2 !isOpen channel from connections.get() for peer {}", to);
-          connections.remove(to);
-        }
+          LOG.debug("node {} got node info for node {} reply {} ", nodeId, to, nodeInfoReply);
+          // what if existing outgoing connection attempt?
+          Channel channel1 = connections.get(to);
+          if (channel1 != null && channel1.isOpen()) {
+            sendMessageAsync(message, channel1);
+            return;
+          } else if (channel1 != null) {
+            LOG.debug("Removing stale2 !isOpen channel from connections.get() for peer {}", to);
+            connections.remove(to);
+          }
 
-        // ok so we connect now:
-        ChannelFuture channelFuture = outgoingBootstrap.connect(nodeInfoReply.addresses.get(0), nodeInfoReply.port);
-        LOG.trace("Connecting to peer {} at address {} port {}", to, nodeInfoReply.addresses.get(0), nodeInfoReply.port);
+          // ok so we connect now:
+          ChannelFuture channelFuture = outgoingBootstrap.connect(nodeInfoReply.addresses.get(0), nodeInfoReply.port);
+          LOG.trace("Connecting to peer {} at address {} port {}", to, nodeInfoReply.addresses.get(0), nodeInfoReply.port);
 
-        // the channel might not be open, so defer the write.
-        connections.put(to, channelFuture.channel());
-        channelFuture.channel().closeFuture().addListener((ChannelFutureListener)
-            future ->
-                fiber.execute(() -> {
+          // the channel might not be open, so defer the write.
+          connections.put(to, channelFuture.channel());
+          channelFuture.channel().closeFuture().addListener((ChannelFutureListener)
+              future ->
                   // remove only THIS channel. It might have been removed prior so.
-                  connections.remove(to, future.channel());
-                }));
+                  fiber.execute(() -> connections.remove(to, future.channel())));
 
-        // funny hack, if the channel future is already open, we execute immediately!
-        channelFuture.addListener((ChannelFutureListener)
-            future -> {
-              if (future.isSuccess()) {
-                sendMessageAsync(message, future.channel());
-              }
-            });
-      }
-    },
+          // funny hack, if the channel future is already open, we execute immediately!
+          channelFuture.addListener((ChannelFutureListener)
+              future -> {
+                if (future.isSuccess()) {
+                  sendMessageAsync(message, future.channel());
+                }
+              });
+        },
         // If the NodeInfoRequest times out:
         ReplicatorConstants.REPLICATOR_NODE_INFO_REQUEST_TIMEOUT_MILLISECONDS, TimeUnit.MILLISECONDS,
         () -> LOG.warn("node info request timeout {} ", nodeInfoRequest));
