@@ -18,6 +18,7 @@ package c5db.replication;
 
 import c5db.interfaces.replication.IndexCommitNotice;
 import c5db.interfaces.replication.QuorumConfiguration;
+import c5db.interfaces.replication.ReplicatorEntry;
 import c5db.interfaces.replication.ReplicatorInstanceEvent;
 import c5db.interfaces.replication.ReplicatorLog;
 import c5db.log.InRamLog;
@@ -35,6 +36,7 @@ import org.jetlang.channels.AsyncRequest;
 import org.jetlang.channels.Channel;
 import org.jetlang.channels.MemoryChannel;
 import org.jetlang.channels.MemoryRequestChannel;
+import org.jetlang.channels.Subscriber;
 import org.jetlang.core.BatchExecutor;
 import org.jetlang.core.RunnableExecutorImpl;
 import org.jetlang.fibers.Fiber;
@@ -52,6 +54,7 @@ import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 import static c5db.AsyncChannelAsserts.ChannelHistoryMonitor;
 import static c5db.FutureMatchers.resultsIn;
@@ -61,6 +64,7 @@ import static c5db.interfaces.replication.Replicator.State;
 import static c5db.log.ReplicatorLogGenericTestUtil.aSeqNum;
 import static c5db.log.ReplicatorLogGenericTestUtil.someData;
 import static c5db.replication.ReplicationMatchers.aListOfEntriesWithConsecutiveSeqNums;
+import static c5db.replication.ReplicationMatchers.aSequentialEntryWithSeqNum;
 import static c5db.replication.ReplicationMatchers.leaderElectedEvent;
 import static c5db.replication.ReplicatorTestUtil.LogSequenceBuilder;
 import static c5db.replication.ReplicatorTestUtil.entries;
@@ -98,7 +102,7 @@ public class ReplicatorAppendEntriesTest {
   public JUnitRuleFiberExceptions fiberExceptionHandler = new JUnitRuleFiberExceptions();
   private final BatchExecutor batchExecutor = new ExceptionHandlingBatchExecutor(fiberExceptionHandler);
 
-  private final Fiber rpcFiber = new ThreadFiber(new RunnableExecutorImpl(batchExecutor), null, true);
+  private final Fiber testFiber = new ThreadFiber(new RunnableExecutorImpl(batchExecutor), null, true);
 
   @Before
   public void setOverallTestExpectations() throws Exception {
@@ -125,13 +129,13 @@ public class ReplicatorAppendEntriesTest {
   public void createAndStartReplicatorAndRpcFiber() throws Exception {
     replicatorInstance = makeTestInstance();
     replicatorInstance.start();
-    rpcFiber.start();
+    testFiber.start();
   }
 
   @After
   public void disposeReplicatorAndRpcFiber() {
     replicatorInstance.dispose();
-    rpcFiber.dispose();
+    testFiber.dispose();
   }
 
   @Test
@@ -318,6 +322,38 @@ public class ReplicatorAppendEntriesTest {
   }
 
   @Test
+  public void issuesAllCommittedEntriesInOrder() throws Exception {
+    context.checking(new Expectations() {{
+      ignoring(log);
+    }});
+
+    final List<LogEntry> loggedEntries = entries()
+        .term(101).indexes(1)
+        .term(102).indexes(2)
+        .term(103).indexes(3)
+        .build();
+    final long greatestSeqNumLogged = loggedEntries.get(loggedEntries.size() - 1).getIndex();
+
+    final Subscriber<ReplicatorEntry> committedEntriesOutput = replicatorInstance.getCommittedEntryChannel();
+    final ChannelHistoryMonitor<ReplicatorEntry> committedEntriesMonitor =
+        new ChannelHistoryMonitor<>(committedEntriesOutput, testFiber);
+    final List<ReplicatorEntry> committedEntriesList = new ArrayList<>();
+    committedEntriesOutput.subscribe(testFiber, committedEntriesList::add);
+
+    havingReceived(
+        anAppendEntriesRequest()
+            .withEntries(loggedEntries)
+            .withCommitIndex(greatestSeqNumLogged));
+
+    committedEntriesMonitor.waitFor(aSequentialEntryWithSeqNum(greatestSeqNumLogged));
+
+    assertThat(committedEntriesList, equalTo(
+        loggedEntries.stream()
+            .map(ReplicatorAppendEntriesTest::logEntryToReplicatorEntry)
+            .collect(Collectors.toList())));
+  }
+
+  @Test
   public void willLogANewQuorumConfigurationItReceivesAndUpdateItsCurrentConfiguration() throws Exception {
     final QuorumConfiguration configuration = aNewConfiguration();
     final List<LogEntry> receivedEntries = entries()
@@ -382,11 +418,11 @@ public class ReplicatorAppendEntriesTest {
 
   private final Channel<IndexCommitNotice> commitNotices = new MemoryChannel<>();
   private final ChannelHistoryMonitor<IndexCommitNotice> commitMonitor =
-      new ChannelHistoryMonitor<>(commitNotices, rpcFiber);
+      new ChannelHistoryMonitor<>(commitNotices, testFiber);
 
   private final Channel<ReplicatorInstanceEvent> eventChannel = new MemoryChannel<>();
   private final ChannelHistoryMonitor<ReplicatorInstanceEvent> eventMonitor =
-      new ChannelHistoryMonitor<>(eventChannel, rpcFiber);
+      new ChannelHistoryMonitor<>(eventChannel, testFiber);
 
   private ReplicatorInstance makeTestInstance() throws Exception {
     long thisReplicatorId = 1;
@@ -439,7 +475,7 @@ public class ReplicatorAppendEntriesTest {
   private void havingReceived(AppendEntriesMessageBuilder messageBuilder) {
     lastReply = SettableFuture.create();
     final RpcWireRequest request = new RpcWireRequest(LEADER_ID, QUORUM_ID, messageBuilder.build());
-    AsyncRequest.withOneReply(rpcFiber, replicatorInstance.getIncomingChannel(), request, lastReply::set);
+    AsyncRequest.withOneReply(testFiber, replicatorInstance.getIncomingChannel(), request, lastReply::set);
   }
 
   private RpcReply reply() throws Exception {
@@ -536,5 +572,9 @@ public class ReplicatorAppendEntriesTest {
 
   private Matcher<List<LogEntry>> anyList() {
     return Matchers.instanceOf(List.class);
+  }
+
+  private static ReplicatorEntry logEntryToReplicatorEntry(LogEntry logEntry) {
+    return new ReplicatorEntry(logEntry.getIndex(), logEntry.getDataList());
   }
 }
