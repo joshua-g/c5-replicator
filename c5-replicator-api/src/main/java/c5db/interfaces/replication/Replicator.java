@@ -112,4 +112,33 @@ public interface Replicator {
    * to the quorum. See {@link c5db.interfaces.replication.IndexCommitNotice} for more info.
    */
   Subscriber<IndexCommitNotice> getCommitNoticeChannel();
+
+  /**
+   * Get a channel of the data the replicator commits. Whereas logData() is the input to
+   * the Replicator quorum system, this method is the way of registering methods capable
+   * of receiving output. There are a couple differences between this method and
+   * getCommitNoticeChannel():
+   * <ul>
+   * <li>This method allows the receipt of committed data itself, not just metadata.</li>
+   * <li>This method does not allow access to the "term" number present in IndexCommitNotice
+   * and ReplicatorReceipt, so it's not suitable for determining if a <em>particular</em>
+   * logData invocation was successful; therefore, it is most useful for Replicators in
+   * the FOLLOWER State, as this is the only way, short of direct log access, for their
+   * users to know about committed data; and since the user did not invoke logData, they
+   * do not care whether or not it succeeded.</li>
+   * </ul>
+   * As mentioned, the motivation of this method is for users of Replicators in the FOLLOWER
+   * State. A user of a Replicator in the LEADER State can control when they call logData,
+   * so they are sure not to miss any IndexCommitNotices as long as they subscribe to the
+   * commit notice channel before calling logData.
+   * <p>
+   * In contrast, a FOLLOWER receives data asynchronously with no way to control the timing
+   * relative to the time of registration to this channel. Users of a Replicator in the
+   * FOLLOWER State likely have a particular next sequence number they are interested in,
+   * in order to received the logged data consecutively -- without gaps in the sequence.
+   * Therefore, it is important that a FOLLOWER trying to do recovery do things in a
+   * particular order: first they should examine an existing log, then they should register
+   * callbacks on this Subscriber, then finally they should start the replicator.
+   */
+  Subscriber<ReplicatorEntry> getCommittedEntryChannel();
 }

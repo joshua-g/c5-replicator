@@ -20,6 +20,7 @@ import c5db.ReplicatorConstants;
 import c5db.interfaces.replication.IndexCommitNotice;
 import c5db.interfaces.replication.QuorumConfiguration;
 import c5db.interfaces.replication.Replicator;
+import c5db.interfaces.replication.ReplicatorEntry;
 import c5db.interfaces.replication.ReplicatorInstanceEvent;
 import c5db.interfaces.replication.ReplicatorLog;
 import c5db.interfaces.replication.ReplicatorReceipt;
@@ -257,6 +258,11 @@ public class ReplicatorInstance implements Replicator {
   @Override
   public Subscriber<IndexCommitNotice> getCommitNoticeChannel() {
     return commitNoticeChannel;
+  }
+
+  @Override
+  public Subscriber<ReplicatorEntry> getCommittedEntryChannel() {
+    return null;
   }
 
   public RequestChannel<RpcWireRequest, RpcReply> getIncomingChannel() {
