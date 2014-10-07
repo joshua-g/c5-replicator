@@ -17,6 +17,7 @@
 package c5db.replication;
 
 import c5db.RpcMatchers;
+import c5db.interfaces.log.SequentialEntry;
 import c5db.interfaces.replication.QuorumConfiguration;
 import c5db.interfaces.replication.ReplicatorInstanceEvent;
 import c5db.replication.generated.LogEntry;
@@ -261,6 +262,20 @@ class ReplicationMatchers {
       public void describeTo(Description description) {
         description.appendText("a list of LogEntry with consecutive indexes from ")
             .appendValue(start).appendText(" inclusive to ").appendValue(end).appendText(" exclusive");
+      }
+    };
+  }
+
+  static Matcher<SequentialEntry> aSequentialEntryWithSeqNum(Matcher<Long> seqNumMatcher) {
+    return new TypeSafeMatcher<SequentialEntry>() {
+      @Override
+      protected boolean matchesSafely(SequentialEntry item) {
+        return seqNumMatcher.matches(item.getSeqNum());
+      }
+
+      @Override
+      public void describeTo(Description description) {
+        description.appendText("a SequentialEntry with sequence number ").appendDescriptionOf(seqNumMatcher);
       }
     };
   }

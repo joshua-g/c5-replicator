@@ -18,6 +18,7 @@ package c5db.replication;
 
 import c5db.interfaces.replication.IndexCommitNotice;
 import c5db.interfaces.replication.QuorumConfiguration;
+import c5db.interfaces.replication.ReplicatorEntry;
 import c5db.interfaces.replication.ReplicatorInstanceEvent;
 import c5db.interfaces.replication.ReplicatorLog;
 import c5db.log.InRamLog;
@@ -35,6 +36,7 @@ import org.jetlang.channels.AsyncRequest;
 import org.jetlang.channels.Channel;
 import org.jetlang.channels.MemoryChannel;
 import org.jetlang.channels.MemoryRequestChannel;
+import org.jetlang.channels.Subscriber;
 import org.jetlang.core.BatchExecutor;
 import org.jetlang.core.RunnableExecutorImpl;
 import org.jetlang.fibers.Fiber;
@@ -50,8 +52,10 @@ import org.junit.Test;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 import static c5db.AsyncChannelAsserts.ChannelHistoryMonitor;
 import static c5db.FutureMatchers.resultsIn;
@@ -61,10 +65,15 @@ import static c5db.interfaces.replication.Replicator.State;
 import static c5db.log.ReplicatorLogGenericTestUtil.aSeqNum;
 import static c5db.log.ReplicatorLogGenericTestUtil.someData;
 import static c5db.replication.ReplicationMatchers.aListOfEntriesWithConsecutiveSeqNums;
+import static c5db.replication.ReplicationMatchers.aSequentialEntryWithSeqNum;
 import static c5db.replication.ReplicationMatchers.leaderElectedEvent;
 import static c5db.replication.ReplicatorTestUtil.LogSequenceBuilder;
+import static c5db.replication.ReplicatorTestUtil.concat;
 import static c5db.replication.ReplicatorTestUtil.entries;
+import static c5db.replication.ReplicatorTestUtil.greatestSeqNumIn;
+import static c5db.replication.ReplicatorTestUtil.leastSeqNumIn;
 import static c5db.replication.ReplicatorTestUtil.makeProtostuffEntry;
+import static c5db.replication.ReplicatorTestUtil.subListContainingSeqNums;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.any;
 import static org.hamcrest.Matchers.equalTo;
@@ -98,7 +107,7 @@ public class ReplicatorAppendEntriesTest {
   public JUnitRuleFiberExceptions fiberExceptionHandler = new JUnitRuleFiberExceptions();
   private final BatchExecutor batchExecutor = new ExceptionHandlingBatchExecutor(fiberExceptionHandler);
 
-  private final Fiber rpcFiber = new ThreadFiber(new RunnableExecutorImpl(batchExecutor), null, true);
+  private final Fiber testFiber = new ThreadFiber(new RunnableExecutorImpl(batchExecutor), null, true);
 
   @Before
   public void setOverallTestExpectations() throws Exception {
@@ -124,14 +133,19 @@ public class ReplicatorAppendEntriesTest {
   @Before
   public void createAndStartReplicatorAndRpcFiber() throws Exception {
     replicatorInstance = makeTestInstance();
+
+    Subscriber<ReplicatorEntry> committedEntriesChannel = replicatorInstance.getCommittedEntryChannel();
+    committedEntriesChannel.subscribe(testFiber, committedEntriesList::add);
+    committedEntriesMonitor = new ChannelHistoryMonitor<>(committedEntriesChannel, testFiber);
+
     replicatorInstance.start();
-    rpcFiber.start();
+    testFiber.start();
   }
 
   @After
   public void disposeReplicatorAndRpcFiber() {
     replicatorInstance.dispose();
-    rpcFiber.dispose();
+    testFiber.dispose();
   }
 
   @Test
@@ -318,6 +332,60 @@ public class ReplicatorAppendEntriesTest {
   }
 
   @Test
+  public void issuesAllCommittedEntriesInOrder() throws Exception {
+    context.checking(new Expectations() {{
+      ignoring(log);
+    }});
+
+    final List<LogEntry> loggedEntries = entries().indexes(1, 2, 3).build();
+
+    havingReceived(
+        anAppendEntriesRequest()
+            .withEntries(loggedEntries)
+            .withCommitIndex(greatestSeqNumIn(loggedEntries)));
+
+    committedEntriesMonitor.waitFor(aSequentialEntryWithSeqNum(equalTo(greatestSeqNumIn(loggedEntries))));
+
+    assertThat(committedEntriesList, is(aReplicatorEntryListWithTheSameSeqNumsAndDataInTheSameOrderAs(loggedEntries)));
+  }
+
+  @Test
+  public void onlyIssuesCommittedEntriesButNotOverwrittenOrUncommittedEntries() throws Exception {
+    context.checking(new Expectations() {{
+      ignoring(log);
+    }});
+
+    final long firstTerm = 1;
+    final List<LogEntry> firstEntryBatch = entries().indexes(1, 2, 3).term(firstTerm).build();
+    final List<LogEntry> secondEntryBatch = entries().indexes(3, 4, 5).term(firstTerm + 1).build();
+    final long commitIndex = 4;
+
+    // Of the six entries to log, the first entry with seqNum equal to 3 will be overwritten
+    // And the fifth will not be committed.
+    final List<LogEntry> expectedCommittedEntries =
+        concat(
+            subListContainingSeqNums(firstEntryBatch, 1, 2),
+            subListContainingSeqNums(secondEntryBatch, 3, 4));
+
+    havingReceived(
+        anAppendEntriesRequest()
+            .withEntries(firstEntryBatch));
+
+    havingReceived(
+        anAppendEntriesRequest()
+            .withPrevLogTerm(firstTerm)
+            .withPrevLogIndex(leastSeqNumIn(secondEntryBatch) - 1)
+            .withEntries(secondEntryBatch)
+            .withCommitIndex(commitIndex));
+
+    committedEntriesMonitor.waitFor(aSequentialEntryWithSeqNum(equalTo(commitIndex)));
+
+    assertThat(committedEntriesList, is(
+        aReplicatorEntryListWithTheSameSeqNumsAndDataInTheSameOrderAs(
+            expectedCommittedEntries)));
+  }
+
+  @Test
   public void willLogANewQuorumConfigurationItReceivesAndUpdateItsCurrentConfiguration() throws Exception {
     final QuorumConfiguration configuration = aNewConfiguration();
     final List<LogEntry> receivedEntries = entries()
@@ -382,11 +450,14 @@ public class ReplicatorAppendEntriesTest {
 
   private final Channel<IndexCommitNotice> commitNotices = new MemoryChannel<>();
   private final ChannelHistoryMonitor<IndexCommitNotice> commitMonitor =
-      new ChannelHistoryMonitor<>(commitNotices, rpcFiber);
+      new ChannelHistoryMonitor<>(commitNotices, testFiber);
 
   private final Channel<ReplicatorInstanceEvent> eventChannel = new MemoryChannel<>();
   private final ChannelHistoryMonitor<ReplicatorInstanceEvent> eventMonitor =
-      new ChannelHistoryMonitor<>(eventChannel, rpcFiber);
+      new ChannelHistoryMonitor<>(eventChannel, testFiber);
+
+  private ChannelHistoryMonitor<ReplicatorEntry> committedEntriesMonitor;
+  private final List<ReplicatorEntry> committedEntriesList = Collections.synchronizedList(new ArrayList<>());
 
   private ReplicatorInstance makeTestInstance() throws Exception {
     long thisReplicatorId = 1;
@@ -439,7 +510,7 @@ public class ReplicatorAppendEntriesTest {
   private void havingReceived(AppendEntriesMessageBuilder messageBuilder) {
     lastReply = SettableFuture.create();
     final RpcWireRequest request = new RpcWireRequest(LEADER_ID, QUORUM_ID, messageBuilder.build());
-    AsyncRequest.withOneReply(rpcFiber, replicatorInstance.getIncomingChannel(), request, lastReply::set);
+    AsyncRequest.withOneReply(testFiber, replicatorInstance.getIncomingChannel(), request, lastReply::set);
   }
 
   private RpcReply reply() throws Exception {
@@ -515,7 +586,7 @@ public class ReplicatorAppendEntriesTest {
     return makeProtostuffEntry(nextLogIndex++, CURRENT_TERM, someData());
   }
 
-  private QuorumConfiguration aNewConfiguration() {
+  private static QuorumConfiguration aNewConfiguration() {
     return QuorumConfiguration.of(Lists.newArrayList(2L, 3L, 4L, 5L));
   }
 
@@ -526,15 +597,27 @@ public class ReplicatorAppendEntriesTest {
     internalLog.logEntries(entries).get();
   }
 
-  private long firstIndexIn(List<LogEntry> entries) {
+  private static long firstIndexIn(List<LogEntry> entries) {
     return entries.get(0).getIndex();
   }
 
-  private long votedForNoOne() {
+  private static long votedForNoOne() {
     return 0;
   }
 
-  private Matcher<List<LogEntry>> anyList() {
+  private static Matcher<List<LogEntry>> anyList() {
     return Matchers.instanceOf(List.class);
+  }
+
+  private static ReplicatorEntry logEntryToReplicatorEntry(LogEntry logEntry) {
+    return new ReplicatorEntry(logEntry.getIndex(), logEntry.getDataList());
+  }
+
+  private static Matcher<List<ReplicatorEntry>> aReplicatorEntryListWithTheSameSeqNumsAndDataInTheSameOrderAs(
+      List<LogEntry> logEntryList) {
+    return equalTo(
+        logEntryList.stream()
+            .map(ReplicatorAppendEntriesTest::logEntryToReplicatorEntry)
+            .collect(Collectors.toList()));
   }
 }
