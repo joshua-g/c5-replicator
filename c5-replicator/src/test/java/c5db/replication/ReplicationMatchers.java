@@ -266,16 +266,16 @@ class ReplicationMatchers {
     };
   }
 
-  static Matcher<SequentialEntry> aSequentialEntryWithSeqNum(long seqNum) {
+  static Matcher<SequentialEntry> aSequentialEntryWithSeqNum(Matcher<Long> seqNumMatcher) {
     return new TypeSafeMatcher<SequentialEntry>() {
       @Override
       protected boolean matchesSafely(SequentialEntry item) {
-        return item.getSeqNum() == seqNum;
+        return seqNumMatcher.matches(item.getSeqNum());
       }
 
       @Override
       public void describeTo(Description description) {
-        description.appendText("a SequentialEntry with sequence number ").appendValue(seqNum);
+        description.appendText("a SequentialEntry with sequence number ").appendDescriptionOf(seqNumMatcher);
       }
     };
   }

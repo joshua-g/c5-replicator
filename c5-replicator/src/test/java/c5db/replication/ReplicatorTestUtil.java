@@ -28,6 +28,9 @@ import java.util.List;
 import static c5db.log.ReplicatorLogGenericTestUtil.someData;
 
 public class ReplicatorTestUtil {
+  public static long greatestSeqNumIn(List<LogEntry> logEntries) {
+    return logEntries.stream().mapToLong(LogEntry::getIndex).max().getAsLong();
+  }
 
   public static LogEntry makeProtostuffEntry(long index, long term, String stringData) {
     return makeProtostuffEntry(index, term, ByteBuffer.wrap(stringData.getBytes(CharsetUtil.UTF_8)));
