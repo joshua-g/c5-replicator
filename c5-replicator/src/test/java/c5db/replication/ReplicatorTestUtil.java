@@ -18,18 +18,42 @@ package c5db.replication;
 
 import c5db.interfaces.replication.QuorumConfiguration;
 import c5db.replication.generated.LogEntry;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
 import io.netty.util.CharsetUtil;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import static c5db.log.ReplicatorLogGenericTestUtil.someData;
 
 public class ReplicatorTestUtil {
   public static long greatestSeqNumIn(List<LogEntry> logEntries) {
     return logEntries.stream().mapToLong(LogEntry::getIndex).max().getAsLong();
+  }
+
+  public static long leastSeqNumIn(List<LogEntry> logEntries) {
+    return logEntries.stream().mapToLong(LogEntry::getIndex).min().getAsLong();
+  }
+
+  public static List<LogEntry> subListContainingSeqNums(List<LogEntry> logEntries, long... seqNums) {
+    Set<Long> seqNumSet = Sets.newHashSet();
+    for (long seqNum : seqNums) {
+      seqNumSet.add(seqNum);
+    }
+
+    return logEntries.stream()
+        .filter(
+            (entry) -> seqNumSet.contains(entry.getIndex()))
+        .collect(Collectors.toList());
+  }
+
+  public static List<LogEntry> concat(List<LogEntry> firstList, List<LogEntry> secondList) {
+    return Lists.newArrayList(Iterables.concat(firstList, secondList));
   }
 
   public static LogEntry makeProtostuffEntry(long index, long term, String stringData) {

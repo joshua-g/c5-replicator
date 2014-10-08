@@ -28,7 +28,6 @@ import c5db.replication.rpc.RpcReply;
 import c5db.replication.rpc.RpcWireRequest;
 import c5db.util.ExceptionHandlingBatchExecutor;
 import c5db.util.JUnitRuleFiberExceptions;
-import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.SettableFuture;
 import org.hamcrest.Matcher;
@@ -69,9 +68,12 @@ import static c5db.replication.ReplicationMatchers.aListOfEntriesWithConsecutive
 import static c5db.replication.ReplicationMatchers.aSequentialEntryWithSeqNum;
 import static c5db.replication.ReplicationMatchers.leaderElectedEvent;
 import static c5db.replication.ReplicatorTestUtil.LogSequenceBuilder;
+import static c5db.replication.ReplicatorTestUtil.concat;
 import static c5db.replication.ReplicatorTestUtil.entries;
 import static c5db.replication.ReplicatorTestUtil.greatestSeqNumIn;
+import static c5db.replication.ReplicatorTestUtil.leastSeqNumIn;
 import static c5db.replication.ReplicatorTestUtil.makeProtostuffEntry;
+import static c5db.replication.ReplicatorTestUtil.subListContainingSeqNums;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.any;
 import static org.hamcrest.Matchers.equalTo;
@@ -353,16 +355,17 @@ public class ReplicatorAppendEntriesTest {
       ignoring(log);
     }});
 
-    final List<LogEntry> firstEntryBatch = entries().indexes(1, 2, 3).term(1).build();
-    final List<LogEntry> secondEntryBatch = entries().indexes(3, 4, 5).term(2).build();
+    final long firstTerm = 1;
+    final List<LogEntry> firstEntryBatch = entries().indexes(1, 2, 3).term(firstTerm).build();
+    final List<LogEntry> secondEntryBatch = entries().indexes(3, 4, 5).term(firstTerm + 1).build();
     final long commitIndex = 4;
 
     // Of the six entries to log, the first entry with seqNum equal to 3 will be overwritten
     // And the fifth will not be committed.
-    final List<LogEntry> expectedCommittedEntries = Lists.newArrayList(
-        Iterables.concat(
-            firstEntryBatch.subList(0, 2),
-            secondEntryBatch.subList(0, 2)));
+    final List<LogEntry> expectedCommittedEntries =
+        concat(
+            subListContainingSeqNums(firstEntryBatch, 1, 2),
+            subListContainingSeqNums(secondEntryBatch, 3, 4));
 
     havingReceived(
         anAppendEntriesRequest()
@@ -370,8 +373,8 @@ public class ReplicatorAppendEntriesTest {
 
     havingReceived(
         anAppendEntriesRequest()
-            .withPrevLogTerm(firstEntryBatch.get(1).getTerm())
-            .withPrevLogIndex(secondEntryBatch.get(1).getIndex() - 1)
+            .withPrevLogTerm(firstTerm)
+            .withPrevLogIndex(leastSeqNumIn(secondEntryBatch) - 1)
             .withEntries(secondEntryBatch)
             .withCommitIndex(commitIndex));
 
