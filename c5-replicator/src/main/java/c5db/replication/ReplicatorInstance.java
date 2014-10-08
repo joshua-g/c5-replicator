@@ -43,7 +43,6 @@ import com.google.common.util.concurrent.SettableFuture;
 import org.jetbrains.annotations.Nullable;
 import org.jetlang.channels.AsyncRequest;
 import org.jetlang.channels.Channel;
-import org.jetlang.channels.ChannelSubscription;
 import org.jetlang.channels.MemoryChannel;
 import org.jetlang.channels.MemoryRequestChannel;
 import org.jetlang.channels.Request;
@@ -153,12 +152,6 @@ public class ReplicatorInstance implements Replicator {
     this.commitNoticeChannel = commitNoticeChannel;
     this.myElectionTimeout = clock.electionTimeout();
     this.lastRPC = clock.currentTimeMillis();
-
-    commitNoticeChannel.subscribe(
-        new ChannelSubscription<>(fiber, this::onCommit,
-            (notice) ->
-                notice.nodeId == myId
-                    && notice.quorumId.equals(quorumId)));
 
     incomingChannel.subscribe(fiber, this::onIncomingMessage);
     fiber.scheduleWithFixedDelay(this::checkOnElection, clock.electionCheckInterval(),
@@ -1218,32 +1211,26 @@ public class ReplicatorInstance implements Replicator {
   private void issueCommitNotifications(long oldLastCommittedIndex) {
     // TODO inefficient, because it calls getLogTerm once for every index. Possible optimization here.
     final long firstCommittedIndex = oldLastCommittedIndex + 1;
-    long firstIndexOfTerm = firstCommittedIndex;
     long nextTerm = log.getLogTerm(firstCommittedIndex);
 
     for (long index = firstCommittedIndex; index <= lastCommittedIndex; index++) {
       long currentTerm = nextTerm;
       if (index == lastCommittedIndex
           || (nextTerm = log.getLogTerm(index + 1)) != currentTerm) {
-        commitNoticeChannel.publish(new IndexCommitNotice(quorumId, myId, firstIndexOfTerm, index, currentTerm));
-        firstIndexOfTerm = index + 1;
+        commitNoticeChannel.publish(new IndexCommitNotice(quorumId, myId, index, currentTerm));
       }
-    }
-  }
 
-  @FiberOnly
-  private void onCommit(IndexCommitNotice notice) {
-    if (notice.firstIndex <= quorumConfigIndex
-        && quorumConfigIndex <= notice.lastIndex) {
-      eventChannel.publish(
-          new ReplicatorInstanceEvent(
-              ReplicatorInstanceEvent.EventType.QUORUM_CONFIGURATION_COMMITTED,
-              this,
-              0,
-              0,
-              clock.currentTimeMillis(),
-              quorumConfig,
-              null));
+      if (index == quorumConfigIndex) {
+        eventChannel.publish(
+            new ReplicatorInstanceEvent(
+                ReplicatorInstanceEvent.EventType.QUORUM_CONFIGURATION_COMMITTED,
+                this,
+                0,
+                0,
+                clock.currentTimeMillis(),
+                quorumConfig,
+                null));
+      }
     }
   }
 

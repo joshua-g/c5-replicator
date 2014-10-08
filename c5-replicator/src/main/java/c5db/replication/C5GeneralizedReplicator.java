@@ -50,6 +50,7 @@ public class C5GeneralizedReplicator implements GeneralizedReplicator {
   private final Fiber fiber;
 
   private SettableFuture<Void> availableFuture;
+  private long lastCommitSeqNum = 0;
 
   /**
    * Queue of receipts for pending log requests and their futures; access this queue only
@@ -144,11 +145,11 @@ public class C5GeneralizedReplicator implements GeneralizedReplicator {
       ReplicatorReceipt receipt = getReceiptOrSetException(receiptWithCompletionFuture);
 
       if (receipt != null) {
-        if (notice.lastIndex < receipt.seqNum) {
+        if (notice.upToAndIncludingSeqNum< receipt.seqNum) {
           // old commit notice
           return;
 
-        } else if (receipt.seqNum < notice.firstIndex) {
+        } else if (receipt.seqNum <= lastCommitSeqNum) {
           completionFuture.setException(new IOException("commit notice skipped over the receipt's seqNum"));
 
         } else if (notice.term != receipt.term) {
@@ -162,6 +163,8 @@ public class C5GeneralizedReplicator implements GeneralizedReplicator {
 
       receiptQueue.poll();
     }
+
+    lastCommitSeqNum = notice.upToAndIncludingSeqNum;
   }
 
   /**

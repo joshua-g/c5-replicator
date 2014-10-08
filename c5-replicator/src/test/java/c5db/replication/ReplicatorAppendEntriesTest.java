@@ -308,13 +308,13 @@ public class ReplicatorAppendEntriesTest {
             .withCommitIndex(5));
 
     assertThatReplicatorWillIssue(aCommitNotice()
-        .withTerm(equalTo(101L)).withIndexRange(equalTo(1L), equalTo(1L)));
+        .withTerm(equalTo(101L)).withSeqNum(equalTo(1L)));
 
     assertThatReplicatorWillIssue(aCommitNotice()
-        .withTerm(equalTo(102L)).withIndexRange(equalTo(2L), equalTo(3L)));
+        .withTerm(equalTo(102L)).withSeqNum(equalTo(3L)));
 
     assertThatReplicatorWillIssue(aCommitNotice()
-        .withTerm(equalTo(103L)).withIndexRange(equalTo(4L), equalTo(5L)));
+        .withTerm(equalTo(103L)).withSeqNum(equalTo(5L)));
   }
 
   @Test
@@ -426,8 +426,8 @@ public class ReplicatorAppendEntriesTest {
   }
 
   private void assertThatReplicatorWillCommitUpToIndex(long index) {
-    commitMonitor.waitFor(aCommitNotice().withIndex(greaterThanOrEqualTo(index)));
-    assertFalse(commitMonitor.hasAny(aCommitNotice().withIndex(greaterThan(index))));
+    commitMonitor.waitFor(aCommitNotice().withSeqNum(greaterThanOrEqualTo(index)));
+    assertFalse(commitMonitor.hasAny(aCommitNotice().withSeqNum(greaterThan(index))));
   }
 
   private void assertThatReplicatorWillIssue(Matcher<IndexCommitNotice> commitNoticeMatcher) {

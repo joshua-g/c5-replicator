@@ -416,8 +416,8 @@ public class ReplicatorLeaderTest {
   }
 
   private void expectLeaderToCommitUpToIndex(long index) {
-    commitMonitor.waitFor(aCommitNotice().withIndex(greaterThanOrEqualTo(index)));
-    assertFalse(commitMonitor.hasAny(aCommitNotice().withIndex(greaterThan(index))));
+    commitMonitor.waitFor(aCommitNotice().withSeqNum(greaterThanOrEqualTo(index)));
+    assertFalse(commitMonitor.hasAny(aCommitNotice().withSeqNum(greaterThan(index))));
   }
 
 }

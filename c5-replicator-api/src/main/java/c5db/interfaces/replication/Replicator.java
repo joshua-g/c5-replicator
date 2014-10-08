@@ -109,7 +109,7 @@ public interface Replicator {
    * Get the Replicator's commit notice channel. By matching these issued IndexCommitNotices
    * against the ReplicatorReceipts returned when logging entries or changing quorums, users
    * of the Replicator can determine whether those submissions were successfully replicated
-   * to the quorum.
+   * to the quorum. See {@link c5db.interfaces.replication.IndexCommitNotice} for more info.
    */
   Subscriber<IndexCommitNotice> getCommitNoticeChannel();
 }

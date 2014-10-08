@@ -612,7 +612,7 @@ public class InRamTest {
     }
 
     public PeerController waitForCommit(long commitIndex) {
-      commitMonitor.waitFor(aCommitNotice().withIndex(greaterThanOrEqualTo(commitIndex)).issuedFromPeer(id));
+      commitMonitor.waitFor(aCommitNotice().withSeqNum(greaterThanOrEqualTo(commitIndex)).issuedFromPeer(id));
       return this;
     }
 
@@ -632,7 +632,7 @@ public class InRamTest {
     }
 
     public boolean hasCommittedEntriesUpTo(long index) {
-      return commitMonitor.hasAny(aCommitNotice().withIndex(greaterThanOrEqualTo(index)).issuedFromPeer(id));
+      return commitMonitor.hasAny(aCommitNotice().withSeqNum(greaterThanOrEqualTo(index)).issuedFromPeer(id));
     }
 
     public boolean hasWonAnElection(Matcher<Long> termMatcher) {
@@ -747,8 +747,8 @@ public class InRamTest {
 
   private void updateLastCommit(IndexCommitNotice notice) {
     long peerId = notice.nodeId;
-    if (notice.lastIndex > lastCommit.getOrDefault(peerId, 0L)) {
-      lastCommit.put(peerId, notice.lastIndex);
+    if (notice.upToAndIncludingSeqNum > lastCommit.getOrDefault(peerId, 0L)) {
+      lastCommit.put(peerId, notice.upToAndIncludingSeqNum);
     }
   }
 
