@@ -108,7 +108,6 @@ public class ReplicatorLeaderTest {
 
   @Before
   public final void createLeaderAndSetupFibersAndChannels() throws Exception {
-    sendRpcChannel.subscribe(rpcFiber, (request) -> System.out.println(request.getRequest()));
     sendRpcChannel.subscribe(rpcFiber, this::routeOutboundRequests);
     sendRpcChannel.subscribe(rpcFiber, requestLog::publish);
 
