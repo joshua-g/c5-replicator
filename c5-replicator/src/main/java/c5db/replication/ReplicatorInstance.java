@@ -16,7 +16,6 @@
 
 package c5db.replication;
 
-import c5db.ReplicatorConstants;
 import c5db.interfaces.replication.IndexCommitNotice;
 import c5db.interfaces.replication.QuorumConfiguration;
 import c5db.interfaces.replication.Replicator;
@@ -56,8 +55,10 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -68,6 +69,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
 
 import static c5db.ReplicatorConstants.REPLICATOR_APPEND_RPC_TIMEOUT_MILLISECONDS;
+import static c5db.ReplicatorConstants.REPLICATOR_MAXIMUM_SIMULTANEOUS_LOG_REQUESTS;
 import static c5db.ReplicatorConstants.REPLICATOR_VOTE_RPC_TIMEOUT_MILLISECONDS;
 
 
@@ -80,6 +82,7 @@ import static c5db.ReplicatorConstants.REPLICATOR_VOTE_RPC_TIMEOUT_MILLISECONDS;
  */
 public class ReplicatorInstance implements Replicator {
   private final Channel<State> stateMemoryChannel = new MemoryChannel<>();
+  private final Channel<ReplicatorEntry> committedEntryChannel = new MemoryChannel<>();
   private final RequestChannel<RpcWireRequest, RpcReply> incomingChannel = new MemoryRequestChannel<>();
   private final RequestChannel<RpcRequest, RpcWireReply> sendRpcChannel;
   private final Channel<ReplicatorInstanceEvent> eventChannel;
@@ -104,7 +107,7 @@ public class ReplicatorInstance implements Replicator {
    */
 
   private final BlockingQueue<InternalReplicationRequest> logRequests =
-      new ArrayBlockingQueue<>(ReplicatorConstants.REPLICATOR_MAXIMUM_SIMULTANEOUS_LOG_REQUESTS);
+      new ArrayBlockingQueue<>(REPLICATOR_MAXIMUM_SIMULTANEOUS_LOG_REQUESTS);
 
   // this is the next index from our log we need to send to each peer, kept track of on a per-peer basis.
   private final Map<Long, Long> peersNextIndex = new HashMap<>();
@@ -129,6 +132,7 @@ public class ReplicatorInstance implements Replicator {
   private volatile State myState = State.FOLLOWER;
   private volatile long lastRPC;
   private long whosLeader = 0;
+  private final Deque<LogEntry> pendingEntries = new ArrayDeque<>(REPLICATOR_MAXIMUM_SIMULTANEOUS_LOG_REQUESTS);
 
 
   public ReplicatorInstance(final Fiber fiber,
@@ -262,7 +266,7 @@ public class ReplicatorInstance implements Replicator {
 
   @Override
   public Subscriber<ReplicatorEntry> getCommittedEntryChannel() {
-    return null;
+    return committedEntryChannel;
   }
 
   public RequestChannel<RpcWireRequest, RpcReply> getIncomingChannel() {
@@ -644,6 +648,9 @@ public class ReplicatorInstance implements Replicator {
 
         // delete this and all subsequent entries from the local log.
         logOperationFutures.add(log.truncateLog(entryIndex));
+        while (pendingEntries.peekLast() != null && pendingEntries.peekLast().getIndex() >= entryIndex) {
+          pendingEntries.removeLast();
+        }
 
         entriesToCommit.add(entry);
         nextIndex = entryIndex + 1;
@@ -652,6 +659,7 @@ public class ReplicatorInstance implements Replicator {
 
     // 7. Append any new entries not already in the log.
     logOperationFutures.add(log.logEntries(entriesToCommit));
+    pendingEntries.addAll(entriesToCommit);
     refreshQuorumConfigurationFromLog();
     return logOperationFutures;
   }
@@ -989,6 +997,7 @@ public class ReplicatorInstance implements Replicator {
 
     List<LogEntry> newLogEntries = createLogEntriesFromIntRequests(reqs, firstIndexInList);
     leaderLogNewEntries(newLogEntries, lastIndexInList);
+    pendingEntries.addAll(newLogEntries);
     refreshQuorumConfigurationFromLog();
 
     assert lastIndexInList == log.getLastIndex();
@@ -1215,15 +1224,28 @@ public class ReplicatorInstance implements Replicator {
 
   @FiberOnly
   private void issueCommitNotifications(long oldLastCommittedIndex) {
-    // TODO inefficient, because it calls getLogTerm once for every index. Possible optimization here.
-    final long firstCommittedIndex = oldLastCommittedIndex + 1;
-    long nextTerm = log.getLogTerm(firstCommittedIndex);
+    final long indexOfFirstEntryToCommit = oldLastCommittedIndex + 1;
+    long firstIndexOfTerm = indexOfFirstEntryToCommit;
 
-    for (long index = firstCommittedIndex; index <= lastCommittedIndex; index++) {
-      long currentTerm = nextTerm;
+    assert pendingEntries.peekFirst() != null || oldLastCommittedIndex == lastCommittedIndex;
+    assert pendingEntries.peekFirst() == null || pendingEntries.peekFirst().getIndex() == indexOfFirstEntryToCommit;
+
+    logger.warn("first to commit: {}; last: {} ", indexOfFirstEntryToCommit, lastCommittedIndex);
+    while (true) {
+      LogEntry nextEntry = pendingEntries.pollFirst();
+      logger.warn("examined pending entries, got {} ", nextEntry);
+      if (nextEntry == null || nextEntry.getIndex() > lastCommittedIndex) {
+        break;
+      }
+
+      long term = nextEntry.getTerm();
+      long index = nextEntry.getIndex();
+
       if (index == lastCommittedIndex
-          || (nextTerm = log.getLogTerm(index + 1)) != currentTerm) {
-        commitNoticeChannel.publish(new IndexCommitNotice(quorumId, myId, index, currentTerm));
+          || pendingEntries.peekFirst() == null
+          || pendingEntries.peekFirst().getTerm() != term) {
+        commitNoticeChannel.publish(new IndexCommitNotice(quorumId, myId, firstIndexOfTerm, index, term));
+        firstIndexOfTerm = index + 1;
       }
 
       if (index == quorumConfigIndex) {
@@ -1237,6 +1259,8 @@ public class ReplicatorInstance implements Replicator {
                 quorumConfig,
                 null));
       }
+
+      committedEntryChannel.publish(new ReplicatorEntry(index, nextEntry.getDataList()));
     }
   }
 
