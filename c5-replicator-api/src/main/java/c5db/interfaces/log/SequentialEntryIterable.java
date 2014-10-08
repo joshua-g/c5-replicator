@@ -35,8 +35,11 @@ public interface SequentialEntryIterable<E extends SequentialEntry> {
 
   default void forEach(Consumer<? super E> action) throws IOException {
     Objects.requireNonNull(action);
-    for (SequentialEntryIterator<E> iterator = this.iterator(); iterator.hasNext(); ) {
-      action.accept(iterator.next());
+
+    try (SequentialEntryIterator<E> iterator = this.iterator()) {
+      for (; iterator.hasNext(); ) {
+        action.accept(iterator.next());
+      }
     }
   }
 
