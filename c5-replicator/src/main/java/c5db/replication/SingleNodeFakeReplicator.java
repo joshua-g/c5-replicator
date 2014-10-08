@@ -79,7 +79,7 @@ public class SingleNodeFakeReplicator implements Replicator {
     doLater(() -> {
       receiptFuture.set(new ReplicatorReceipt(term, thisSeqNum));
       doLater(() ->
-          commitNoticeChannel.publish(new IndexCommitNotice(quorumId, nodeId, thisSeqNum, thisSeqNum, term)));
+          commitNoticeChannel.publish(new IndexCommitNotice(quorumId, nodeId, thisSeqNum, term)));
     });
 
     return receiptFuture;

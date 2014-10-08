@@ -17,27 +17,33 @@
 package c5db.interfaces.replication;
 
 /**
- * A broadcast that indicates that a particular range of replicator indexes have become
- * visible, i.e., been committed. All of the indexes in this range must correspond to
- * a single term, so if a given range subsumes multiple terms and they are all committed
- * at once, multiple IndexCommitNotices will be needed -- one for each term.
+ * A broadcast that indicates that Replicator entries have become visible, i.e., been
+ * committed, up to and including a certain sequence number. If several IndexCommitNotices
+ * are sent out in a row, each one describes the set of new entries that have been
+ * committed since the one immediately preceding it.
+ * <p>
+ * The set of entries described by this notice must correspond to a single election term,
+ * so if a given range comprises multiple terms and they are all committed at once,
+ * multiple IndexCommitNotices will be needed to signal that fact -- one for each term.
+ * <p>
+ * The first IndexCommitNotice emitted by a new Replicator is special; of course it does
+ * not have any preceding notice, so it describes an open range: it indicates that all
+ * sequence numbers less than or equal to a certain sequence number are committed. Also,
+ * in that case, the term number only represents the term of the last entry in the range.
  */
 public class IndexCommitNotice {
   public final String quorumId;
   public final long nodeId;
-  public final long firstIndex;
-  public final long lastIndex;
+  public final long upToAndIncludingSeqNum;
   public final long term;
 
   public IndexCommitNotice(String quorumId,
                            long nodeId,
-                           long firstIndex,
-                           long lastIndex,
+                           long upToAndIncludingSeqNum,
                            long term) {
     this.quorumId = quorumId;
     this.nodeId = nodeId;
-    this.firstIndex = firstIndex;
-    this.lastIndex = lastIndex;
+    this.upToAndIncludingSeqNum = upToAndIncludingSeqNum;
     this.term = term;
   }
 
@@ -46,8 +52,7 @@ public class IndexCommitNotice {
     return "IndexCommitNotice{" +
         "quorumId=" + quorumId +
         ", nodeId=" + nodeId +
-        ", firstIndex=" + firstIndex +
-        ", lastIndex=" + lastIndex +
+        ", upToAndIncludingSeqNum=" + upToAndIncludingSeqNum +
         ", term=" + term +
         '}';
   }

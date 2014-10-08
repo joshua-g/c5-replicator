@@ -47,32 +47,13 @@ public class IndexCommitMatcher extends TypeSafeMatcher<IndexCommitNotice> {
             .appendText("an IndexCommitNotice"));
   }
 
-  public IndexCommitMatcher withIndex(Matcher<Long> indexMatcher) {
-    return addCriterion(
-        (item) -> {
-          // inefficient, but good enough for testing:
-          for (long index = item.firstIndex; index <= item.lastIndex; index++) {
-            if (indexMatcher.matches(index)) {
-              return true;
-            }
-          }
-          return false;
-        },
-        (description) ->
-            description.appendText(" including log index ")
-                .appendDescriptionOf(indexMatcher));
-  }
-
-  public IndexCommitMatcher withIndexRange(Matcher<Long> firstIndexMatcher, Matcher<Long> lastIndexMatcher) {
+  public IndexCommitMatcher withSeqNum(Matcher<Long> seqNumMatcher) {
     return addCriterion(
         (item) ->
-            firstIndexMatcher.matches(item.firstIndex)
-                && lastIndexMatcher.matches(item.lastIndex),
+            seqNumMatcher.matches(item.upToAndIncludingSeqNum),
         (description) ->
-            description.appendText(" with first index ")
-                .appendDescriptionOf(firstIndexMatcher)
-                .appendText(" and last index ")
-                .appendDescriptionOf(lastIndexMatcher));
+            description.appendText(" including log index ")
+                .appendDescriptionOf(seqNumMatcher));
   }
 
   public IndexCommitMatcher withTerm(Matcher<Long> termMatcher) {
