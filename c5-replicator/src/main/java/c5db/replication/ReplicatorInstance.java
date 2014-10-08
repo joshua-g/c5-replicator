@@ -1225,7 +1225,6 @@ public class ReplicatorInstance implements Replicator {
   @FiberOnly
   private void issueCommitNotifications(long oldLastCommittedIndex) {
     final long indexOfFirstEntryToCommit = oldLastCommittedIndex + 1;
-    long firstIndexOfTerm = indexOfFirstEntryToCommit;
 
     assert pendingEntries.peekFirst() != null || oldLastCommittedIndex == lastCommittedIndex;
     assert pendingEntries.peekFirst() == null || pendingEntries.peekFirst().getIndex() == indexOfFirstEntryToCommit;
@@ -1244,8 +1243,7 @@ public class ReplicatorInstance implements Replicator {
       if (index == lastCommittedIndex
           || pendingEntries.peekFirst() == null
           || pendingEntries.peekFirst().getTerm() != term) {
-        commitNoticeChannel.publish(new IndexCommitNotice(quorumId, myId, firstIndexOfTerm, index, term));
-        firstIndexOfTerm = index + 1;
+        commitNoticeChannel.publish(new IndexCommitNotice(quorumId, myId, index, term));
       }
 
       if (index == quorumConfigIndex) {
