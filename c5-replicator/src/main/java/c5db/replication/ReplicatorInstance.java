@@ -161,7 +161,7 @@ public class ReplicatorInstance implements Replicator {
     incomingChannel.subscribe(fiber, this::onIncomingMessage);
     fiber.scheduleWithFixedDelay(this::checkOnElection, clock.electionCheckInterval(),
         clock.electionCheckInterval(), TimeUnit.MILLISECONDS);
-
+commitNoticeChannel.subscribe(fiber, System.out::println);
     this.myState = initialState;
 
     fiber.execute(() -> {
@@ -1222,43 +1222,63 @@ public class ReplicatorInstance implements Replicator {
     }
   }
 
+  /**
+   * Send out relevant notifications upon discovering entries have been committed
+   * by our quorum. This method assumes that if it is being called, at least one
+   * new entry has been committed (or, what is the same thing, has become known
+   * to be committed).
+   *
+   * @param oldLastCommittedIndex The value of lastCommitIndex before its most recent
+   *                              change which caused this method to be called.
+   */
   @FiberOnly
   private void issueCommitNotifications(long oldLastCommittedIndex) {
-    final long indexOfFirstEntryToCommit = oldLastCommittedIndex + 1;
+    assert oldLastCommittedIndex != lastCommittedIndex;
 
-    assert pendingEntries.peekFirst() != null || oldLastCommittedIndex == lastCommittedIndex;
-    assert pendingEntries.peekFirst() == null || pendingEntries.peekFirst().getIndex() == indexOfFirstEntryToCommit;
+    logger.warn("old commit index: {}; new: {} ", oldLastCommittedIndex, lastCommittedIndex);
 
-    logger.warn("first to commit: {}; last: {} ", indexOfFirstEntryToCommit, lastCommittedIndex);
-    while (true) {
-      LogEntry nextEntry = pendingEntries.pollFirst();
-      logger.warn("examined pending entries, got {} ", nextEntry);
-      if (nextEntry == null || nextEntry.getIndex() > lastCommittedIndex) {
-        break;
+    if (oldLastCommittedIndex < quorumConfigIndex
+        && quorumConfigIndex <= lastCommittedIndex) {
+      eventChannel.publish(
+          new ReplicatorInstanceEvent(
+              ReplicatorInstanceEvent.EventType.QUORUM_CONFIGURATION_COMMITTED,
+              this,
+              0,
+              0,
+              clock.currentTimeMillis(),
+              quorumConfig,
+              null));
+    }
+
+    if (pendingEntries.peekFirst() == null || pendingEntries.peekFirst().getIndex() > lastCommittedIndex) {
+      logger.warn("no pending entries or first entry is not yet committed; entry = {}", pendingEntries.peekFirst());
+      assert oldLastCommittedIndex == 0;
+      long term = log.getLogTerm(lastCommittedIndex);
+      logger.warn("publishing commit notice with term looked up from log {}", term);
+      commitNoticeChannel.publish(new IndexCommitNotice(quorumId, myId, lastCommittedIndex, term));
+    } else {
+      logger.warn("peeking at first pending entry is {}", pendingEntries.peekFirst());
+      assert pendingEntries.peekFirst().getIndex() == oldLastCommittedIndex + 1;
+
+      while (true) {
+        LogEntry nextEntry = pendingEntries.pollFirst();
+        logger.warn("pulled first pending entry is {}", pendingEntries.peekFirst());
+
+        if (nextEntry == null || nextEntry.getIndex() > lastCommittedIndex) {
+          break;
+        }
+
+        long term = nextEntry.getTerm();
+        long index = nextEntry.getIndex();
+
+        if (index == lastCommittedIndex
+            || pendingEntries.peekFirst() == null
+            || pendingEntries.peekFirst().getTerm() != term) {
+          commitNoticeChannel.publish(new IndexCommitNotice(quorumId, myId, index, term));
+        }
+
+        committedEntryChannel.publish(new ReplicatorEntry(index, nextEntry.getDataList()));
       }
-
-      long term = nextEntry.getTerm();
-      long index = nextEntry.getIndex();
-
-      if (index == lastCommittedIndex
-          || pendingEntries.peekFirst() == null
-          || pendingEntries.peekFirst().getTerm() != term) {
-        commitNoticeChannel.publish(new IndexCommitNotice(quorumId, myId, index, term));
-      }
-
-      if (index == quorumConfigIndex) {
-        eventChannel.publish(
-            new ReplicatorInstanceEvent(
-                ReplicatorInstanceEvent.EventType.QUORUM_CONFIGURATION_COMMITTED,
-                this,
-                0,
-                0,
-                clock.currentTimeMillis(),
-                quorumConfig,
-                null));
-      }
-
-      committedEntryChannel.publish(new ReplicatorEntry(index, nextEntry.getDataList()));
     }
   }
 
